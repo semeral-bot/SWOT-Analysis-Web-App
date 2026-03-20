@@ -76,11 +76,12 @@ const ProgressBar = ({ step }) => {
   );
 };
 
-const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+const gemini = new GoogleGenerativeAI(geminiApiKey);
 
 async function generateActionSteps(formData) {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY not set in environment variables');
+  if (!geminiApiKey) {
+    throw new Error('VITE_GEMINI_API_KEY not set in environment variables');
   }
 
   const prompt = `You are an expert strategy advisor. Create a short AI action report from this input:\n\nProblem: ${formData.problem}\nStrengths: ${formData.strengths.join(', ') || 'None'}\nWeaknesses: ${formData.weaknesses.join(', ') || 'None'}\nOpportunities: ${formData.opportunities.join(', ') || 'None'}\nThreats: ${formData.threats.join(', ') || 'None'}\n\nReturn JSON with keys quick_wins, strategic_moves, risk_prevention (arrays).`;
@@ -600,8 +601,8 @@ function ReportSection({ formData, setStep, setFormData }) {
             />
             <div className="absolute inset-2 rounded-full bg-gradient-to-r from-indigo-500 to-pink-500 animate-pulse" />
           </div>
-          <h2 className="text-2xl font-bold text-white">Analyzing with Gemini...</h2>
-          <p className="text-white/80">Preparing strategic action steps, one idea at a time.</p>
+          <h2 className="text-2xl font-bold text-white">Our AI consultant is analyzing your strategy...</h2>
+          <p className="text-white/80">One moment while we generate a smart action plan from your SWOT inputs.</p>
         </motion.div>
       </div>
     );
