@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { TrendingUp, AlertTriangle, CheckCircle, Zap, ArrowRight, Trash2, ArrowLeft, Plus, HelpCircle, Sparkles } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { TrendingUp, AlertTriangle, CheckCircle, Zap, ArrowRight, Trash2, ArrowLeft, Plus, HelpCircle, Sparkles, Brain, Clipboard, Download } from 'lucide-react';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
 
@@ -74,6 +75,44 @@ const ProgressBar = ({ step }) => {
     </div>
   );
 };
+
+const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+async function generateActionSteps(formData) {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY not set in environment variables');
+  }
+
+  const prompt = `You are an expert strategy advisor. Create a short AI action report from this input:\n\nProblem: ${formData.problem}\nStrengths: ${formData.strengths.join(', ') || 'None'}\nWeaknesses: ${formData.weaknesses.join(', ') || 'None'}\nOpportunities: ${formData.opportunities.join(', ') || 'None'}\nThreats: ${formData.threats.join(', ') || 'None'}\n\nReturn JSON with keys quick_wins, strategic_moves, risk_prevention (arrays).`;
+
+  try {
+    const model = gemini.getGenerativeModel({ model: 'gemini-3-flash' });
+    const response = await model.generateContent({ contents: [prompt] });
+    const text = response?.response?.text?.() || '';
+    if (!text) throw new Error('No content returned from Gemini');
+
+    const jsonStart = text.indexOf('{');
+    const jsonEnd = text.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+      const parsed = JSON.parse(text.substring(jsonStart, jsonEnd + 1));
+      return {
+        quickWins: parsed.quick_wins || [],
+        strategicMoves: parsed.strategic_moves || [],
+        riskPrevention: parsed.risk_prevention || [],
+      };
+    }
+
+    // fallback: simple text split from sections
+    const fallback = { quickWins: [], strategicMoves: [], riskPrevention: [] };
+    const sections = text.split(/Quick Wins:|Strategic Moves:|Risk Prevention:/i);
+    if (sections.length >= 2) fallback.quickWins = sections[1].split('\n').map(l => l.trim()).filter(Boolean);
+    if (sections.length >= 3) fallback.strategicMoves = sections[2].split('\n').map(l => l.trim()).filter(Boolean);
+    if (sections.length >= 4) fallback.riskPrevention = sections[3].split('\n').map(l => l.trim()).filter(Boolean);
+    return fallback;
+  } catch (error) {
+    throw new Error(`Gemini report generation failed: ${error.message}`);
+  }
+}
 
 function EducationalSection({ setStep }) {
   const [selectedQuadrant, setSelectedQuadrant] = useState(null);
@@ -494,13 +533,55 @@ function App() {
   );
 }
 
-function ReportSection({ formData }) {
+function ReportSection({ formData, setStep, setFormData }) {
   const [loading, setLoading] = useState(true);
+  const [aiReport, setAiReport] = useState({ quickWins: [], strategicMoves: [], riskPrevention: [] });
+  const [error, setError] = useState(null);
 
-  React.useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 1500);
-    return () => clearTimeout(timer);
-  }, []);
+  useEffect(() => {
+    let mounted = true;
+
+    const run = async () => {
+      setLoading(true);
+      try {
+        const result = await generateActionSteps(formData);
+        if (mounted) {
+          setAiReport(result);
+          setLoading(false);
+        }
+      } catch (err) {
+        if (mounted) {
+          setError(err.message);
+          setLoading(false);
+        }
+      }
+    };
+
+    run();
+
+    return () => {
+      mounted = false;
+    };
+  }, [formData]);
+
+  const actionText = `Problem: ${formData.problem}\n\nQuick Wins:\n${aiReport.quickWins.join('\n')}\n\nStrategic Moves:\n${aiReport.strategicMoves.join('\n')}\n\nRisk Prevention:\n${aiReport.riskPrevention.join('\n')}`;
+
+  const copyReport = async () => {
+    await navigator.clipboard.writeText(actionText);
+    alert('Action plan copied to clipboard');
+  };
+
+  const downloadReport = () => {
+    const blob = new Blob([actionText], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'swot-action-plan.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   if (loading) {
     return (
@@ -510,12 +591,17 @@ function ReportSection({ formData }) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
         >
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-            className="w-16 h-16 border-4 border-white/20 border-t-white rounded-full mx-auto mb-4"
-          />
-          <h2 className="text-2xl font-bold text-white">Analyzing Your Strategy...</h2>
+          <Brain className="mx-auto w-20 h-20 text-white animate-pulse mb-4" />
+          <div className="relative w-24 h-24 mx-auto mb-4">
+            <motion.div
+              className="absolute inset-0 rounded-full border-4 border-white/40"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1.2, repeat: Infinity, ease: 'linear' }}
+            />
+            <div className="absolute inset-2 rounded-full bg-gradient-to-r from-indigo-500 to-pink-500 animate-pulse" />
+          </div>
+          <h2 className="text-2xl font-bold text-white">Analyzing with Gemini...</h2>
+          <p className="text-white/80">Preparing strategic action steps, one idea at a time.</p>
         </motion.div>
       </div>
     );
@@ -530,42 +616,96 @@ function ReportSection({ formData }) {
           initial={{ opacity: 0, y: -50 }}
           animate={{ opacity: 1, y: 0 }}
         >
-          SWOT Action Plan Report
+          SWOT AI Report
         </motion.h1>
+
         <motion.div
-          className="mb-8 p-6 bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl"
+          className="mb-6 p-6 bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
+          transition={{ delay: 0.1 }}
         >
-          <h2 className="text-2xl font-semibold text-white mb-4">Challenge/Goal</h2>
-          <p className="text-white">{formData.problem || 'No problem statement provided.'}</p>
+          <h2 className="text-xl text-white font-semibold mb-2">Problem Statement</h2>
+          <p className="text-white/90">{formData.problem || 'No problem statement provided.'}</p>
         </motion.div>
-        <motion.div
-          className="grid grid-cols-1 md:grid-cols-2 gap-6"
-          initial={{ opacity: 0, y: 50 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-        >
-          {quadrants.map((quadrant) => (
-            <div
-              key={quadrant.name}
-              className="p-6 bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl"
-            >
-              <h3 className="text-2xl font-semibold mb-4" style={{ color: quadrant.color }}>{quadrant.name}</h3>
-              {formData[quadrant.name.toLowerCase()].length > 0 ? (
-                <ul className="space-y-2">
-                  {formData[quadrant.name.toLowerCase()].map((item, index) => (
-                    <li key={index} className="text-white bg-white/10 p-2 rounded">{item}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-white/50">No items added.</p>
-              )}
-            </div>
-          ))}
-        </motion.div>
+
+        {error && (
+          <div className="mb-6 p-4 bg-red-500/20 border border-red-400 text-red-50 rounded-lg">Error: {error}</div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="p-4 bg-green-500/20 border border-green-300 rounded-xl">
+            <h3 className="text-lg font-bold text-green-100 mb-3">⚡ Quick Wins</h3>
+            <ul className="space-y-2">
+              {aiReport.quickWins.length > 0 ? aiReport.quickWins.map((item, idx) => (
+                <motion.li
+                  key={idx}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 * idx }}
+                  className="text-white/90 bg-green-500/10 p-2 rounded"
+                >{item}</motion.li>
+              )) : <li className="text-white/70">No quick wins generated.</li>}
+            </ul>
+          </div>
+
+          <div className="p-4 bg-blue-500/20 border border-blue-300 rounded-xl">
+            <h3 className="text-lg font-bold text-blue-100 mb-3">🚀 Strategic Moves</h3>
+            <ul className="space-y-2">
+              {aiReport.strategicMoves.length > 0 ? aiReport.strategicMoves.map((item, idx) => (
+                <motion.li
+                  key={idx}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 * idx }}
+                  className="text-white/90 bg-blue-500/10 p-2 rounded"
+                >{item}</motion.li>
+              )) : <li className="text-white/70">No strategic moves generated.</li>}
+            </ul>
+          </div>
+
+          <div className="p-4 bg-red-500/20 border border-red-300 rounded-xl">
+            <h3 className="text-lg font-bold text-red-100 mb-3">🛡️ Risk Prevention</h3>
+            <ul className="space-y-2">
+              {aiReport.riskPrevention.length > 0 ? aiReport.riskPrevention.map((item, idx) => (
+                <motion.li
+                  key={idx}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 * idx }}
+                  className="text-white/90 bg-red-500/10 p-2 rounded"
+                >{item}</motion.li>
+              )) : <li className="text-white/70">No risk prevention generated.</li>}
+            </ul>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-3 mb-8">
+          <button
+            onClick={copyReport}
+            className="px-4 py-2 bg-white/20 border border-white/30 text-white rounded-lg flex items-center gap-2 hover:bg-white/30 transition"
+          >
+            <Clipboard className="w-4 h-4" /> Copy to Clipboard
+          </button>
+          <button
+            onClick={downloadReport}
+            className="px-4 py-2 bg-white/20 border border-white/30 text-white rounded-lg flex items-center gap-2 hover:bg-white/30 transition"
+          >
+            <Download className="w-4 h-4" /> Download Action Plan
+          </button>
+          <button
+            onClick={() => {
+              setFormData({ problem: '', strengths: [], weaknesses: [], opportunities: [], threats: [] });
+              setStep(1);
+            }}
+            className="px-4 py-2 bg-gradient-to-r from-indigo-500 to-pink-500 text-white rounded-lg hover:opacity-90 transition flex items-center gap-2"
+          >
+            Restart
+          </button>
+        </div>
       </div>
     </div>
   );
-}export default App;
+}
+
+export default App;
